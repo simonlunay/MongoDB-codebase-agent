@@ -1,6 +1,6 @@
 # MongoDB Codebase Agent
 
-An autonomous AI agent that indexes GitHub repositories into **MongoDB Atlas Vector Search**, then lets you search, analyse, and act on any codebase using natural language — powered by **Google ADK 2.0** and **Gemini 2.5 Flash**.
+An autonomous AI agent that indexes GitHub repositories into **MongoDB Atlas Vector Search**, then lets you search, analyse, and act on any codebase using natural language, powered by **Google ADK 2.0** and **Gemini 2.5 Flash**.
 
 ---
 
@@ -73,7 +73,7 @@ An autonomous AI agent that indexes GitHub repositories into **MongoDB Atlas Vec
 
 ## Environment Variables
 
-Create a `.env` file (never committed — see `.gitignore`) or export these in your shell:
+Create a `.env` file (never committed; see `.gitignore`) or export these in your shell:
 
 ```env
 # MongoDB
@@ -92,7 +92,7 @@ MONGODB_CLIENT_ID=your-atlas-api-client-id
 MONGODB_CLIENT_SECRET=your-atlas-api-client-secret
 ```
 
-> **Note:** The agent reads all variables directly from `os.environ`. Never call `load_dotenv` — set them in your shell, `.env` (loaded by your runner), or as container environment variables.
+> **Note:** The agent reads all variables directly from `os.environ`. Never call `load_dotenv`. Set them in your shell, `.env` (loaded by your runner), or as container environment variables.
 
 ---
 
@@ -243,15 +243,15 @@ mongodb-codebase-agent/
 
 ## Troubleshooting
 
-**`KeyError: 'MONGODB_URI'`** — the environment variable is not set. Export it in your shell before running.
+**`KeyError: 'MONGODB_URI'`** - the environment variable is not set. Export it in your shell before running.
 
-**`Failed to create MCP session`** — the MongoDB MCP server is not running. Start it first:
+**`Failed to create MCP session`** - the MongoDB MCP server is not running. Start it first:
 ```bash
 npx -y mongodb-mcp-server --transport http --port 3000
 ```
 
-**`No results found` from `search_codebase`** — either the repo hasn't been indexed yet (`index_repository`) or the Atlas `vector_index` hasn't been created (see [Atlas Setup](#mongodb-atlas-setup)).
+**`No results found` from `search_codebase`** - either the repo hasn't been indexed yet (`index_repository`) or the Atlas `vector_index` hasn't been created (see [Atlas Setup](#mongodb-atlas-setup)).
 
-**`400 Bad Request` on MCP** — the agent is using SSE transport against a Streamable HTTP server. The correct params class is `StreamableHTTPConnectionParams` (already configured).
+**`400 Bad Request` on MCP** - the agent is using SSE transport against a Streamable HTTP server. The correct params class is `StreamableHTTPConnectionParams` (already configured).
 
-**Slow first index** — large repos can take a few minutes. Files over 500 KB are skipped automatically; text is truncated to 25 000 characters before embedding.
+**Slow first index** - large repos can take a few minutes. Files over 500 KB are skipped automatically; text is truncated to 25 000 characters before embedding.
