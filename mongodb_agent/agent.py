@@ -3,7 +3,7 @@ import os
 os.environ['GOOGLE_GENAI_USE_VERTEXAI'] = '1'
 
 from google.adk.agents import Agent
-from google.adk.tools.mcp_tool import McpToolset, StreamableHTTPConnectionParams as StreamableHTTPServerParams
+from google.adk.tools.mcp_tool import McpToolset, SseConnectionParams as SseServerParams
 
 from mongodb_agent.tools import (
     index_repository,
@@ -25,7 +25,7 @@ from mongodb_agent.tools import (
 os.environ["MDB_MCP_CONNECTION_STRING"] = os.environ["MONGODB_URI"]
 
 _mongodb_mcp = McpToolset(
-    connection_params=StreamableHTTPServerParams(
+    connection_params=SseServerParams(
         url="http://127.0.0.1:3000/mcp",
     )
 )
