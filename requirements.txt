@@ -1,0 +1,6 @@
+google-adk
+google-genai
+pymongo
+python-dotenv
+requests
+mcp
