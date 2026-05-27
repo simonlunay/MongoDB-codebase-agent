@@ -12,6 +12,7 @@ import os
 import re
 import base64
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -775,3 +776,318 @@ def audit_dependencies(repo_url: str) -> str:
         report_parts.append("")
 
     return "\n".join(report_parts)
+
+
+# ---------------------------------------------------------------------------
+# Tool 12 — list_pull_requests
+# ---------------------------------------------------------------------------
+
+def list_pull_requests(repo_url: str, state: str = "open") -> str:
+    """
+    List pull requests for a GitHub repository.
+
+    Args:
+        repo_url: GitHub repository URL.
+        state:    PR state filter — 'open', 'closed', or 'all'. Defaults to 'open'.
+
+    Returns:
+        A formatted list of PRs with number, title, author, date, and URL.
+    """
+    owner, repo = _parse_github_url(repo_url)
+
+    if state not in ("open", "closed", "all"):
+        state = "open"
+
+    resp = requests.get(
+        f"https://api.github.com/repos/{owner}/{repo}/pulls",
+        headers=_github_headers(),
+        params={"state": state, "per_page": 50},
+        timeout=20,
+    )
+    resp.raise_for_status()
+    prs = resp.json()
+
+    if not prs:
+        return f"No {state} pull requests found for {repo_url}."
+
+    lines = [f"{len(prs)} {state} pull request(s) for {repo_url}:\n"]
+    for pr in prs:
+        created = pr["created_at"][:10]
+        author = pr["user"]["login"]
+        lines.append(
+            f"  #{pr['number']} [{created}] {pr['title']}\n"
+            f"         Author: {author} | {pr['html_url']}"
+        )
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Tool 13 — review_pull_request
+# ---------------------------------------------------------------------------
+
+_DIFF_SECURITY_PATTERNS = [
+    (r"^\+.*(password|secret|api_key|token)\s*=\s*['\"][^'\"]{4,}", "Possible hardcoded credential added"),
+    (r"^\+.*eval\s*\(", "eval() added in diff"),
+    (r"^\+.*exec\s*\(", "exec() added in diff"),
+    (r"^\+.*shell\s*=\s*True", "subprocess shell=True added in diff"),
+    (r"^\+.*innerHTML\s*=", "innerHTML assignment added in diff"),
+    (r"^\+.*TODO|^\+.*FIXME|^\+.*HACK", "Developer note added"),
+]
+
+
+def review_pull_request(repo_url: str, pr_number: int) -> str:
+    """
+    Fetch a pull request's description, changed files, and diff from GitHub,
+    then return a structured analysis with a recommended review decision.
+
+    Args:
+        repo_url:  GitHub repository URL.
+        pr_number: Pull request number.
+
+    Returns:
+        A detailed report including files changed, lines added/removed,
+        flagged diff patterns, and a recommendation of APPROVE,
+        REQUEST_CHANGES, or COMMENT with reasoning.
+    """
+    owner, repo = _parse_github_url(repo_url)
+    headers = _github_headers()
+
+    # PR metadata
+    pr_resp = requests.get(
+        f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}",
+        headers=headers,
+        timeout=20,
+    )
+    pr_resp.raise_for_status()
+    pr = pr_resp.json()
+
+    # Changed files
+    files_resp = requests.get(
+        f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/files",
+        headers=headers,
+        params={"per_page": 100},
+        timeout=20,
+    )
+    files_resp.raise_for_status()
+    files = files_resp.json()
+
+    # Raw diff
+    diff_headers = {**headers, "Accept": "application/vnd.github.v3.diff"}
+    diff_resp = requests.get(
+        f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}",
+        headers=diff_headers,
+        timeout=30,
+    )
+    diff_resp.raise_for_status()
+    diff_text = diff_resp.text[:20_000]  # cap to avoid huge diffs
+
+    # Aggregate stats
+    total_additions = sum(f.get("additions", 0) for f in files)
+    total_deletions = sum(f.get("deletions", 0) for f in files)
+
+    # File list
+    file_lines = []
+    for f in files:
+        status = f.get("status", "modified")
+        additions = f.get("additions", 0)
+        deletions = f.get("deletions", 0)
+        file_lines.append(
+            f"  [{status}] {f['filename']}  +{additions}/-{deletions}"
+        )
+
+    # Static pattern scan on diff
+    diff_flags: list[str] = []
+    for pattern, description in _DIFF_SECURITY_PATTERNS:
+        if re.search(pattern, diff_text, re.IGNORECASE | re.MULTILINE):
+            diff_flags.append(f"  ⚠ {description}")
+
+    # Heuristic signals
+    concerns: list[str] = []
+    if diff_flags:
+        for flag in diff_flags:
+            concerns.append(flag.strip())
+    if len(files) > 30:
+        concerns.append(f"Large PR: {len(files)} files changed — consider splitting into smaller PRs")
+    if total_additions > 500:
+        concerns.append(f"High line count: +{total_additions} additions across {len(files)} files")
+
+    # Derive a concrete recommended action from the heuristics
+    if diff_flags:
+        recommended_action = "REQUEST_CHANGES"
+        recommendation_reason = (
+            "Security-sensitive patterns were detected in the diff (see flags above). "
+            "These must be addressed before merging."
+        )
+    elif concerns:
+        recommended_action = "COMMENT"
+        recommendation_reason = (
+            "No security issues were detected, but the PR has structural concerns "
+            "(size or complexity) that warrant discussion before approval."
+        )
+    else:
+        recommended_action = "APPROVE"
+        recommendation_reason = (
+            "No security flags or structural concerns were detected by static analysis. "
+            "The diff appears clean. Manual review of logic correctness is still advised."
+        )
+
+    flags_text = "\n".join(f"  {f}" for f in diff_flags) if diff_flags else "  None detected"
+    concerns_text = "\n".join(f"  - {c}" for c in concerns) if concerns else "  None"
+
+    return (
+        f"# PR Review Analysis: #{pr_number} - {pr['title']}\n\n"
+        f"**Author:** {pr['user']['login']}\n"
+        f"**Branch:** `{pr['head']['ref']}` -> `{pr['base']['ref']}`\n"
+        f"**State:** {pr['state']}\n"
+        f"**Created:** {pr['created_at'][:10]}\n"
+        f"**URL:** {pr['html_url']}\n\n"
+        f"## Description\n{pr.get('body') or '(no description)'}\n\n"
+        f"## Files Changed ({len(files)} files, +{total_additions}/-{total_deletions})\n"
+        + "\n".join(file_lines) + "\n\n"
+        f"## Security Pattern Flags\n{flags_text}\n\n"
+        f"## Concerns\n{concerns_text}\n\n"
+        f"## Diff (first 20 000 chars)\n```diff\n{diff_text}\n```\n\n"
+        f"---\n\n"
+        f"## Recommended Action: {recommended_action}\n\n"
+        f"**Reasoning:** {recommendation_reason}\n\n"
+        f"> This analysis has NOT been submitted to GitHub. "
+        f"Present this recommendation to the user and ask for explicit confirmation "
+        f"before calling submit_pr_review."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tool 14 — submit_pr_review
+# ---------------------------------------------------------------------------
+
+_VALID_REVIEW_EVENTS = {"APPROVE", "REQUEST_CHANGES", "COMMENT"}
+
+
+def submit_pr_review(
+    repo_url: str,
+    pr_number: int,
+    event: str,
+    comment: str,
+) -> str:
+    """
+    Submit a review on a GitHub pull request.
+
+    Args:
+        repo_url:  GitHub repository URL.
+        pr_number: Pull request number.
+        event:     Review decision — must be 'APPROVE', 'REQUEST_CHANGES',
+                   or 'COMMENT'.
+        comment:   Review body text.
+
+    Returns:
+        Confirmation with the review ID and HTML URL.
+    """
+    event = event.upper()
+    if event not in _VALID_REVIEW_EVENTS:
+        return (
+            f"Invalid event '{event}'. Must be one of: "
+            + ", ".join(sorted(_VALID_REVIEW_EVENTS))
+        )
+
+    owner, repo = _parse_github_url(repo_url)
+
+    resp = requests.post(
+        f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/reviews",
+        headers=_github_headers(),
+        json={"body": comment, "event": event},
+        timeout=20,
+    )
+    resp.raise_for_status()
+    review = resp.json()
+    return (
+        f"Review submitted: {event} on PR #{pr_number}. "
+        f"Review ID: {review['id']} | {review.get('html_url', '')}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tool 15 — merge_pull_request
+# ---------------------------------------------------------------------------
+
+_VALID_MERGE_METHODS = {"merge", "squash", "rebase"}
+
+
+def merge_pull_request(
+    repo_url: str,
+    pr_number: int,
+    merge_method: str = "squash",
+) -> str:
+    """
+    Merge a GitHub pull request.
+
+    Args:
+        repo_url:     GitHub repository URL.
+        pr_number:    Pull request number.
+        merge_method: How to merge — 'squash', 'merge', or 'rebase'.
+                      Defaults to 'squash'.
+
+    Returns:
+        Confirmation message with the resulting merge commit SHA.
+    """
+    if merge_method not in _VALID_MERGE_METHODS:
+        merge_method = "squash"
+
+    owner, repo = _parse_github_url(repo_url)
+
+    resp = requests.put(
+        f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/merge",
+        headers=_github_headers(),
+        json={"merge_method": merge_method},
+        timeout=20,
+    )
+    resp.raise_for_status()
+    result = resp.json()
+    sha = result.get("sha", "unknown")
+    return (
+        f"PR #{pr_number} merged via '{merge_method}'. "
+        f"Merge commit SHA: {sha[:7]}. {result.get('message', '')}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tool 16 — log_pr_review
+# ---------------------------------------------------------------------------
+
+def log_pr_review(
+    repo_url: str,
+    pr_number: int,
+    decision: str,
+    reasoning: str,
+) -> str:
+    """
+    Persist a PR review decision and its reasoning to the MongoDB
+    'pr_reviews' collection in codebase_db.
+
+    Args:
+        repo_url:  GitHub repository URL.
+        pr_number: Pull request number.
+        decision:  Review decision (e.g. 'APPROVE', 'REQUEST_CHANGES', 'COMMENT').
+        reasoning: Detailed reasoning behind the decision.
+
+    Returns:
+        Confirmation that the review log was stored, including its document ID.
+    """
+    repo_url = _normalize_repo_url(repo_url)
+    db = _get_db()
+    coll = db["pr_reviews"]
+
+    doc = {
+        "repo_url": repo_url,
+        "pr_number": pr_number,
+        "decision": decision.upper(),
+        "reasoning": reasoning,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    result = coll.insert_one(doc)
+    return (
+        f"PR review logged. Collection: pr_reviews | "
+        f"Document ID: {result.inserted_id} | "
+        f"PR #{pr_number} | Decision: {doc['decision']}"
+    )

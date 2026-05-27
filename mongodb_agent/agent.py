@@ -17,6 +17,11 @@ from mongodb_agent.tools import (
     create_pull_request,
     summarize_recent_commits,
     audit_dependencies,
+    list_pull_requests,
+    review_pull_request,
+    submit_pr_review,
+    merge_pull_request,
+    log_pr_review,
 )
 
 # Expose MONGODB_URI as MDB_MCP_CONNECTION_STRING so any subprocess that
@@ -43,9 +48,22 @@ root_agent = Agent(
         "- Find bugs and security vulnerabilities\n"
         "- Generate markdown documentation\n"
         "- Create GitHub issues, pull requests, and PR review comments\n"
+        "- List, review, submit reviews on, and merge pull requests\n"
+        "- Log PR review decisions and reasoning to MongoDB\n"
         "- Update MongoDB documents directly\n"
         "- Summarize recent git commits\n"
         "- Audit project dependencies for security risks\n\n"
+        "## PR Review — Human-in-the-Loop Rule\n\n"
+        "IMPORTANT: When reviewing a pull request, you MUST follow this exact sequence:\n\n"
+        "1. Call review_pull_request to fetch the diff and analysis.\n"
+        "2. Present the full analysis, security flags, concerns, and the recommended "
+        "action (APPROVE / REQUEST_CHANGES / COMMENT) to the user with your own reasoning.\n"
+        "3. STOP and explicitly ask the user: 'Would you like me to submit this review "
+        "to GitHub, or would you like to change the decision or comment?'\n"
+        "4. Only call submit_pr_review after the user has given explicit confirmation.\n"
+        "5. After submitting, offer to call log_pr_review to record the decision in MongoDB.\n\n"
+        "NEVER call submit_pr_review or merge_pull_request without explicit user approval "
+        "in that conversation turn. These are irreversible actions on the GitHub repository.\n\n"
         "Always be precise, thorough, and actionable in your responses. "
         "When analyzing code, provide concrete examples and line references when possible."
     ),
@@ -61,6 +79,11 @@ root_agent = Agent(
         create_pull_request,
         summarize_recent_commits,
         audit_dependencies,
+        list_pull_requests,
+        review_pull_request,
+        submit_pr_review,
+        merge_pull_request,
+        log_pr_review,
         _mongodb_mcp,
     ],
 )
