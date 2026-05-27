@@ -8,8 +8,8 @@ mongodb-mcp-server --version || echo "MCP binary not found"
 echo "=== Locating binary in PATH ==="
 which mongodb-mcp-server || echo "not in PATH"
 
-echo "=== Starting MongoDB MCP server (transport: sse) ==="
-mongodb-mcp-server --transport sse --logPath /tmp/mcp.log 2>&1 &
+echo "=== Starting MongoDB MCP server (transport: http) ==="
+mongodb-mcp-server --transport http --logPath /tmp/mcp.log 2>&1 &
 
 echo "=== Waiting 5 seconds for MCP server to initialise ==="
 sleep 5
